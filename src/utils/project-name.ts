@@ -4,6 +4,23 @@ import { logger } from './logger.js';
 import { detectWorktree } from './worktree.js';
 
 /**
+ * Toggle for routing all worktree writes/queries to the parent project name.
+ *
+ * When set to a truthy value, getProjectName() returns the parent repo name
+ * for any cwd inside a git worktree (e.g. "rfd" instead of "brisbane" from
+ * ~/conductor/workspaces/rfd/brisbane). This consolidates memory across all
+ * worktrees of a repo so context-injection from any worktree (or from Pi or
+ * Claude Code) sees a unified timeline.
+ *
+ * Default: enabled. Set CLAUDE_MEM_WORKTREE_PARENT=0 to opt out.
+ */
+function shouldUseParentForWorktrees(): boolean {
+  const v = process.env.CLAUDE_MEM_WORKTREE_PARENT;
+  if (v === undefined || v === null || v === '') return true;
+  return v !== '0' && v.toLowerCase() !== 'false' && v.toLowerCase() !== 'no';
+}
+
+/**
  * Expand leading ~ to the user's home directory.
  * Handles "~", "~/", and "~/subpath" but not "~user/" (which is rare in cwd).
  */
@@ -29,6 +46,20 @@ export function getProjectName(cwd: string | null | undefined): string {
 
   // Expand leading ~ before path operations
   const expanded = expandTilde(cwd)
+
+  // Worktree consolidation: if this cwd is inside a git worktree, prefer the
+  // parent repo name so memories don't fragment across per-worktree namespaces
+  // (e.g. "brisbane" / "seoul" / "albuquerque"). Opt-out via env var.
+  if (shouldUseParentForWorktrees()) {
+    try {
+      const wt = detectWorktree(expanded);
+      if (wt.isWorktree && wt.parentProjectName) {
+        return wt.parentProjectName;
+      }
+    } catch {
+      // fall through to basename
+    }
+  }
 
   // Extract basename (handles trailing slashes automatically)
   const basename = path.basename(expanded);
@@ -88,7 +119,17 @@ export function getProjectContext(cwd: string | null | undefined): ProjectContex
   const worktreeInfo = detectWorktree(expandedCwd);
 
   if (worktreeInfo.isWorktree && worktreeInfo.parentProjectName) {
-    // In a worktree: include parent first for chronological ordering
+    // When CLAUDE_MEM_WORKTREE_PARENT consolidation is on (default),
+    // primary === parentProjectName already, so dedupe in allProjects.
+    if (primary === worktreeInfo.parentProjectName) {
+      return {
+        primary,
+        parent: worktreeInfo.parentProjectName,
+        isWorktree: true,
+        allProjects: [primary]
+      };
+    }
+    // Opt-out path: keep both names so queries see a unified timeline.
     return {
       primary,
       parent: worktreeInfo.parentProjectName,

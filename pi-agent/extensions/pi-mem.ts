@@ -21,6 +21,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { loadConfig, type PiMemConfig } from "./config.js";
+import { deriveProjectName } from "./derive-project-name.js";
 import {
 	formatGlobalRecallText,
 	runGlobalRecall,
@@ -214,17 +215,10 @@ async function loadBridgeRecall(): Promise<OMBridgeRecaller | null> {
 // =============================================================================
 // Project Name Derivation
 //
-// Scopes observations by project. Uses PI_MEM_PROJECT env var if set,
-// otherwise derives from the working directory basename with a "pi-" prefix.
+// Mirrors the worker-side getProjectName so observations written from Pi
+// sessions and from Claude Code hooks land in the same project namespace.
+// See ./derive-project-name.ts for the resolution order.
 // =============================================================================
-
-function deriveProjectName(cwd: string): string {
-	if (process.env.PI_MEM_PROJECT) {
-		return process.env.PI_MEM_PROJECT;
-	}
-	const dir = basename(cwd);
-	return `pi-${dir}`;
-}
 
 // =============================================================================
 // Extension Factory
